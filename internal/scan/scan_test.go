@@ -34,7 +34,9 @@ func TestExpandCIDRAtravessaOctetos(t *testing.T) {
 // O coletor inventaria a rede da própria unidade. Aceitar faixa pública o
 // transformaria em scanner apontável para terceiros.
 func TestExpandCIDRRecusaFaixaPublica(t *testing.T) {
-	for _, cidr := range []string{"8.8.8.0/24", "198.51.100.0/24"} {
+	// Faixas de documentacao (RFC 5737) em vez de endereco real de producao: o
+	// teste so precisa de algo publico, e um IP real aqui entrega infraestrutura.
+	for _, cidr := range []string{"198.51.100.0/24", "203.0.113.0/24"} {
 		_, err := ExpandCIDR(cidr)
 		if err == nil {
 			t.Errorf("%s foi aceita", cidr)
@@ -68,7 +70,7 @@ func TestRunIgnoraFaixaInvalidaEContinua(t *testing.T) {
 
 	port := listener.Addr().(*net.TCPAddr).Port
 	hosts, errs := Run(context.Background(), Config{
-		CIDRs:   []string{"8.8.8.0/24", "127.0.0.1/32"},
+		CIDRs:   []string{"198.51.100.0/24", "127.0.0.1/32"},
 		Ports:   []int{port},
 		Timeout: 300 * time.Millisecond,
 	})

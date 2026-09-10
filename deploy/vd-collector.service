@@ -3,7 +3,7 @@
 # Instalar:
 #   sudo cp collector /usr/local/bin/vd-collector
 #   sudo cp deploy/vd-collector.service /etc/systemd/system/
-#   sudo cp deploy/collector.env /etc/vd-collector.env   # e edite
+#   sudo cp deploy/collector.env.exemplo /etc/vd-collector.env   # e edite
 #   sudo chmod 600 /etc/vd-collector.env
 #   sudo systemctl enable --now vd-collector
 
