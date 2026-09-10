@@ -9,7 +9,7 @@
 
 [Unit]
 Description=vd_stats - coletor de inventario de rede da unidade
-Documentation=https://github.com/joaov/vd_collector
+Documentation=https://github.com/jvS0uzx/dockkeeper_collector
 After=network-online.target
 Wants=network-online.target
 

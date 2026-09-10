@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/joaov/vd_collector/internal/scan"
+	"github.com/jvS0uzx/dockkeeper_collector/internal/scan"
 )
 
 const (

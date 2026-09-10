@@ -16,10 +16,10 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/joaov/vd_collector/internal/config"
-	"github.com/joaov/vd_collector/internal/identity"
-	"github.com/joaov/vd_collector/internal/push"
-	"github.com/joaov/vd_collector/internal/scan"
+	"github.com/jvS0uzx/dockkeeper_collector/internal/config"
+	"github.com/jvS0uzx/dockkeeper_collector/internal/identity"
+	"github.com/jvS0uzx/dockkeeper_collector/internal/push"
+	"github.com/jvS0uzx/dockkeeper_collector/internal/scan"
 )
 
 // Version identifica a build no inventário do painel.
