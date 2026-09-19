@@ -53,8 +53,6 @@ func TestLoadExigeObrigatorios(t *testing.T) {
 	}
 }
 
-// Intervalo curto demais faria a varredura seguinte disparar com a anterior
-// ainda em curso.
 func TestLoadAplicaIntervaloMinimo(t *testing.T) {
 	vars := validEnv()
 	vars["COLLECTOR_INTERVAL_MIN"] = "0"

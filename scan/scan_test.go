@@ -31,11 +31,7 @@ func TestExpandCIDRAtravessaOctetos(t *testing.T) {
 	}
 }
 
-// O coletor inventaria a rede da própria unidade. Aceitar faixa pública o
-// transformaria em scanner apontável para terceiros.
 func TestExpandCIDRRecusaFaixaPublica(t *testing.T) {
-	// Faixas de documentacao (RFC 5737) em vez de endereco real de producao: o
-	// teste so precisa de algo publico, e um IP real aqui entrega infraestrutura.
 	for _, cidr := range []string{"198.51.100.0/24", "203.0.113.0/24"} {
 		_, err := ExpandCIDR(cidr)
 		if err == nil {

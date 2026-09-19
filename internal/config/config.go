@@ -1,8 +1,9 @@
-// Package config lê a configuração do coletor a partir do ambiente.
 package config
 
 import (
 	"errors"
+	"fmt"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -13,22 +14,18 @@ const (
 	MinInterval     = time.Minute
 )
 
-// Config é tudo que o coletor precisa para operar numa unidade.
 type Config struct {
-	// ServerURL é o painel central que recebe o inventário.
 	ServerURL string
-	// SiteCode identifica a unidade. Precisa existir cadastrada no painel.
-	SiteCode string
+	Inseguro  bool
+	SiteCode  string
 
 	CIDRs    []string
 	Ports    []int
 	Interval time.Duration
 
-	// Once faz uma varredura só e encerra, para uso em cron.
 	Once bool
 }
 
-// Getenv é injetável para o teste não depender do ambiente do processo.
 type Getenv func(string) string
 
 var (
@@ -37,11 +34,22 @@ var (
 	ErrMissingCIDRs     = errors.New("COLLECTOR_CIDRS não definido (ex: 192.168.0.0/24)")
 )
 
-// Load monta a configuração e valida o que é obrigatório.
+func alvoInseguro(bruto string) (bool, error) {
+	endereco, err := url.Parse(strings.TrimSpace(bruto))
+	if err != nil || endereco.Host == "" {
+		return false, fmt.Errorf("COLLECTOR_SERVER_URL inválido: %q", bruto)
+	}
+	if endereco.Scheme != "http" {
+		return false, nil
+	}
+	host := endereco.Hostname()
+	if host == "localhost" || host == "127.0.0.1" || host == "::1" {
+		return false, nil
+	}
+	return true, nil
+}
+
 func Load(getenv Getenv) (Config, error) {
-	// A identidade (credencial de dispositivo, convite de enrollment ou o
-	// COLLECTOR_TOKEN legado) não entra aqui: é resolvida em internal/identity,
-	// porque depende de estado em disco além do ambiente.
 	cfg := Config{
 		ServerURL: strings.TrimRight(strings.TrimSpace(getenv("COLLECTOR_SERVER_URL")), "/"),
 		SiteCode:  strings.ToLower(strings.TrimSpace(getenv("COLLECTOR_SITE"))),
@@ -61,11 +69,21 @@ func Load(getenv Getenv) (Config, error) {
 			cfg.Interval = time.Duration(n) * time.Minute
 		}
 	}
-	// Intervalo curto demais faz a varredura anterior ainda estar rodando
-	// quando a próxima dispara.
 	if cfg.Interval < MinInterval {
 		cfg.Interval = MinInterval
 	}
+
+	inseguro, err := alvoInseguro(cfg.ServerURL)
+	if cfg.ServerURL != "" && err != nil {
+		return cfg, err
+	}
+	permitido := isTrue(getenv("ALLOW_INSECURE_HTTP"))
+	if inseguro && !permitido {
+		return cfg, fmt.Errorf(
+			"COLLECTOR_SERVER_URL usa http:// para um painel remoto (%s): a credencial do coletor viajaria em claro. Use https, ou defina ALLOW_INSECURE_HTTP=true se a rede for confiável",
+			cfg.ServerURL)
+	}
+	cfg.Inseguro = inseguro && permitido
 
 	switch {
 	case cfg.ServerURL == "":
@@ -78,7 +96,6 @@ func Load(getenv Getenv) (Config, error) {
 	return cfg, nil
 }
 
-// SplitList quebra uma lista separada por vírgula, ignorando espaços e vazios.
 func SplitList(raw string) []string {
 	var out []string
 	for _, item := range strings.Split(raw, ",") {

@@ -1,12 +1,7 @@
-# Binario compilado
 /collector
-/vd-collector
+/dockkeeper-collector
 
-# Configuracao local com segredo. A excecao cobre os modelos versionados: um
-# arquivo chamado *.env rastreado no git e convite a preencher com o valor real
-# e commitar sem perceber.
 *.env
 !*.env.exemplo
 
-# Credencial local de enrollment (desenvolvimento com COLLECTOR_CREDENTIAL_PATH)
 credential.json

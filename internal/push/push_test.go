@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -12,8 +13,6 @@ import (
 	"time"
 )
 
-// clienteDeTeste encurta o intervalo entre tentativas para o teste não
-// esperar os segundos reais da produção.
 func clienteDeTeste(url string, id Identity) *Client {
 	c := New(url, id)
 	c.delay = time.Millisecond
@@ -68,10 +67,59 @@ func TestEnviaTokenLegadoSemCredencial(t *testing.T) {
 	}
 }
 
-// Credencial recusada é configuração errada, não instabilidade: repetir só
-// martelaria o painel com a mesma credencial inválida.
+func contarRequisicoes(t *testing.T, status int) (int32, error) {
+	t.Helper()
+	var chamadas atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		chamadas.Add(1)
+		w.WriteHeader(status)
+	}))
+	defer srv.Close()
+
+	err := clienteDeTeste(srv.URL, Identity{DeviceID: "d", DeviceToken: "t"}).Send(context.Background(), Payload{})
+	return chamadas.Load(), err
+}
+
+func TestTransitorioRepeteTresVezes(t *testing.T) {
+	for _, status := range []int{
+		http.StatusInternalServerError,
+		http.StatusBadGateway,
+		http.StatusServiceUnavailable,
+		http.StatusTooManyRequests,
+	} {
+		n, err := contarRequisicoes(t, status)
+		if n != int32(maxAttempts) {
+			t.Errorf("HTTP %d: %d requisições, esperado %d", status, n, maxAttempts)
+		}
+		if err == nil || errors.Is(err, ErrUnauthorized) || errors.Is(err, ErrRecusado) {
+			t.Errorf("HTTP %d: erro = %v, esperada falha transitória esgotada", status, err)
+		}
+	}
+}
+
+func TestRecusaDefinitivaFazUmaTentativaSo(t *testing.T) {
+	for _, status := range []int{
+		http.StatusBadRequest,
+		http.StatusNotFound,
+		http.StatusConflict,
+		http.StatusRequestEntityTooLarge,
+		http.StatusUnprocessableEntity,
+	} {
+		n, err := contarRequisicoes(t, status)
+		if n != 1 {
+			t.Errorf("HTTP %d: %d requisições, esperado 1", status, n)
+		}
+		if !errors.Is(err, ErrRecusado) || errors.Is(err, ErrUnauthorized) {
+			t.Errorf("HTTP %d: erro = %v, esperado ErrRecusado", status, err)
+		}
+		if err != nil && !strings.Contains(err.Error(), fmt.Sprintf("HTTP %d", status)) {
+			t.Errorf("HTTP %d: mensagem sem o status: %v", status, err)
+		}
+	}
+}
+
 func TestCredencialRecusadaNaoRepete(t *testing.T) {
-	for _, status := range []int{http.StatusUnauthorized, http.StatusServiceUnavailable} {
+	for _, status := range []int{http.StatusUnauthorized, http.StatusForbidden} {
 		var chamadas atomic.Int32
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			chamadas.Add(1)
@@ -132,7 +180,6 @@ func TestDesisteAposEsgotarTentativas(t *testing.T) {
 	}
 }
 
-// Falha de rede não é ErrUnauthorized: o ciclo seguinte deve tentar de novo.
 func TestFalhaDeRedeNaoEhCredencialRecusada(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
 	url := srv.URL
@@ -143,13 +190,14 @@ func TestFalhaDeRedeNaoEhCredencialRecusada(t *testing.T) {
 	if err == nil {
 		t.Fatal("esperava erro com o painel fora do ar")
 	}
-	if errors.Is(err, ErrUnauthorized) {
-		t.Errorf("falha de rede classificada como credencial recusada: %v", err)
+	if errors.Is(err, ErrUnauthorized) || errors.Is(err, ErrRecusado) {
+		t.Errorf("falha de rede classificada como recusa: %v", err)
+	}
+	if !strings.Contains(err.Error(), fmt.Sprintf("%d tentativas", maxAttempts)) {
+		t.Errorf("falha de rede deveria ser repetida %d vezes: %v", maxAttempts, err)
 	}
 }
 
-// O *url.Error embute a URL inteira na mensagem. Se um segredo aparecer por
-// lá, ele não pode chegar ao log.
 func TestSegredosNaoVazamNaMensagemDeErro(t *testing.T) {
 	casos := []struct {
 		nome    string
@@ -162,7 +210,6 @@ func TestSegredosNaoVazamNaMensagemDeErro(t *testing.T) {
 	}
 	for _, caso := range casos {
 		t.Run(caso.nome, func(t *testing.T) {
-			// O segredo dentro da URL força o *url.Error a citá-lo.
 			c := clienteDeTeste("http://"+caso.segredo+".invalid:0", caso.id)
 			err := c.Send(context.Background(), Payload{})
 			if err == nil {
@@ -175,5 +222,32 @@ func TestSegredosNaoVazamNaMensagemDeErro(t *testing.T) {
 				t.Errorf("mensagem sem a marca de redação %q: %v", caso.marca, err)
 			}
 		})
+	}
+}
+
+func TestRecusaDoTokenLegadoExplicaAFlagDoPainel(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+	}))
+	defer srv.Close()
+
+	err := clienteDeTeste(srv.URL, Identity{LegacyToken: "x"}).Send(context.Background(), Payload{})
+	if !errors.Is(err, ErrUnauthorized) {
+		t.Fatalf("erro = %v, esperado ErrUnauthorized", err)
+	}
+	if !strings.Contains(err.Error(), "ALLOW_LEGACY_INGEST_TOKEN=true") || !strings.Contains(err.Error(), "COLLECTOR_ENROLL_TOKEN") {
+		t.Errorf("mensagem não orienta a migração: %v", err)
+	}
+}
+
+func TestRecusaDeCredencialPropriaNaoFalaDeTokenLegado(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+	}))
+	defer srv.Close()
+
+	err := clienteDeTeste(srv.URL, Identity{DeviceID: "d", DeviceToken: "t"}).Send(context.Background(), Payload{})
+	if strings.Contains(err.Error(), "ALLOW_LEGACY_INGEST_TOKEN") {
+		t.Errorf("credencial própria recebeu orientação do modo legado: %v", err)
 	}
 }

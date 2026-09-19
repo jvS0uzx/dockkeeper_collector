@@ -1,4 +1,3 @@
-// Package push envia o inventário coletado ao painel central.
 package push
 
 import (
@@ -11,50 +10,41 @@ import (
 	"strings"
 	"time"
 
-	"github.com/jvS0uzx/dockkeeper_collector/internal/scan"
+	"github.com/jvS0uzx/dockkeeper_collector/scan"
 )
 
 const (
-	// Prazo do envio. Inventário de uma /24 cabe em poucos KB, então um envio
-	// que passa disso indica painel indisponível, não payload grande.
 	timeout = 30 * time.Second
 
-	// Tentativas antes de descartar o ciclo. O próximo já traz o inventário
-	// atualizado, então insistir muito não agrega.
 	maxAttempts = 3
 	retryDelay  = 5 * time.Second
 
 	endpointPath = "/api/ingest/inventory"
 )
 
-// ErrUnauthorized indica credencial recusada ou ingestão desligada no painel.
-// Não adianta repetir: é configuração, não instabilidade.
 var ErrUnauthorized = errors.New("credencial recusada pelo painel")
 
-// Payload é o corpo enviado ao painel.
+var ErrRecusado = errors.New("painel recusou o inventário")
+
+var errTransitorio = errors.New("falha transitória")
+
 type Payload struct {
 	SiteCode         string      `json:"site_code"`
 	CollectorVersion string      `json:"collector_version"`
 	Hosts            []scan.Host `json:"hosts"`
 }
 
-// Identity é o que o cliente apresenta ao painel: a credencial própria de
-// dispositivo quando existe, ou o token compartilhado da transição. O mesmo
-// par de headers do vd-agent — X-Device-Id/X-Device-Token, com X-Agent-Token
-// como legado.
 type Identity struct {
 	DeviceID    string
 	DeviceToken string
 	LegacyToken string
 }
 
-// Client fala com o painel central.
 type Client struct {
 	baseURL string
 	id      Identity
 	http    *http.Client
 
-	// delay é campo, não constante, para o teste não esperar segundos reais.
 	delay time.Duration
 }
 
@@ -67,7 +57,6 @@ func New(baseURL string, id Identity) *Client {
 	}
 }
 
-// Send entrega o inventário, repetindo em falha transitória.
 func (c *Client) Send(ctx context.Context, payload Payload) error {
 	body, err := json.Marshal(payload)
 	if err != nil {
@@ -80,8 +69,7 @@ func (c *Client) Send(ctx context.Context, payload Payload) error {
 		if err == nil {
 			return nil
 		}
-		// Credencial errada não melhora com repetição.
-		if errors.Is(err, ErrUnauthorized) {
+		if !errors.Is(err, errTransitorio) {
 			return err
 		}
 		lastErr = err
@@ -113,23 +101,27 @@ func (c *Client) post(ctx context.Context, body []byte) error {
 
 	resp, err := c.http.Do(req)
 	if err != nil {
-		return c.redact(err)
+		return fmt.Errorf("%w: %w", errTransitorio, c.redact(err))
 	}
 	defer resp.Body.Close()
 
 	switch {
 	case resp.StatusCode == http.StatusOK, resp.StatusCode == http.StatusAccepted:
 		return nil
-	case resp.StatusCode == http.StatusUnauthorized, resp.StatusCode == http.StatusServiceUnavailable:
+	case resp.StatusCode == http.StatusUnauthorized, resp.StatusCode == http.StatusForbidden:
+		if c.id.DeviceID == "" {
+			return fmt.Errorf("%w (HTTP %d): o token compartilhado so e aceito com "+
+				"ALLOW_LEGACY_INGEST_TOKEN=true no painel; migre para COLLECTOR_ENROLL_TOKEN",
+				ErrUnauthorized, resp.StatusCode)
+		}
 		return fmt.Errorf("%w (HTTP %d)", ErrUnauthorized, resp.StatusCode)
+	case resp.StatusCode >= 500, resp.StatusCode == http.StatusTooManyRequests:
+		return fmt.Errorf("%w: painel respondeu HTTP %d", errTransitorio, resp.StatusCode)
 	default:
-		return fmt.Errorf("painel respondeu HTTP %d", resp.StatusCode)
+		return fmt.Errorf("%w (HTTP %d)", ErrRecusado, resp.StatusCode)
 	}
 }
 
-// redact tira os segredos de mensagens de erro. O *url.Error do Go embute a
-// URL inteira; se algum dia um segredo andar por lá, ele não pode ir para o
-// log.
 func (c *Client) redact(err error) error {
 	if err == nil {
 		return nil

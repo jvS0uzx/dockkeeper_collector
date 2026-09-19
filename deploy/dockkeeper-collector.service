@@ -1,0 +1,29 @@
+[Unit]
+Description=DockKeeper - coletor de inventario de rede da unidade
+Documentation=https://github.com/jvS0uzx/dockkeeper_collector
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/dockkeeper-collector
+EnvironmentFile=/etc/dockkeeper-collector.env
+Restart=always
+RestartSec=30
+
+DynamicUser=yes
+NoNewPrivileges=yes
+StateDirectory=dockkeeper-collector
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+
+[Install]
+WantedBy=multi-user.target

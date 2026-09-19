@@ -1,10 +1,3 @@
-// Command collector varre a rede local de uma unidade e envia o inventário
-// para o painel vd_stats.
-//
-// Existe porque o painel só enxerga a rede onde roda: com o painel central
-// numa VPS ou na matriz, nenhuma varredura alcança a LAN das filiais. O
-// coletor faz o papel do proxy do Zabbix — roda dentro da unidade, varre
-// localmente e faz push do resultado.
 package main
 
 import (
@@ -19,10 +12,9 @@ import (
 	"github.com/jvS0uzx/dockkeeper_collector/internal/config"
 	"github.com/jvS0uzx/dockkeeper_collector/internal/identity"
 	"github.com/jvS0uzx/dockkeeper_collector/internal/push"
-	"github.com/jvS0uzx/dockkeeper_collector/internal/scan"
+	"github.com/jvS0uzx/dockkeeper_collector/scan"
 )
 
-// Version identifica a build no inventário do painel.
 const Version = "1.0.0"
 
 func main() {
@@ -34,6 +26,10 @@ func main() {
 		log.Fatalf("configuração inválida: %v", err)
 	}
 
+	if cfg.Inseguro {
+		log.Printf("AVISO: %s usa http:// e ALLOW_INSECURE_HTTP=true; a credencial do coletor viaja em claro nesta rede", cfg.ServerURL)
+	}
+
 	log.Printf("v%s unidade=%q faixas=%v destino=%s intervalo=%s",
 		Version, cfg.SiteCode, cfg.CIDRs, cfg.ServerURL, cfg.Interval)
 
@@ -43,8 +39,6 @@ func main() {
 		log.Fatalf("%v", err)
 	}
 
-	// SIGTERM do systemd encerra a varredura em curso em vez de matar o
-	// processo no meio do envio.
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
@@ -77,7 +71,6 @@ func main() {
 	}
 }
 
-// cycle faz uma varredura e envia o resultado.
 func cycle(ctx context.Context, cfg config.Config, client *push.Client) error {
 	started := time.Now()
 
@@ -91,8 +84,6 @@ func cycle(ctx context.Context, cfg config.Config, client *push.Client) error {
 
 	log.Printf("varredura: %d hosts em %s", len(hosts), time.Since(started).Round(time.Millisecond))
 
-	// Inventário vazio ainda é informação — significa rede fora do ar — mas
-	// enviar isso apagaria o último estado bom se todas as faixas falharam.
 	if len(hosts) == 0 && len(errs) > 0 {
 		return nil
 	}

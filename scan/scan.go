@@ -1,9 +1,3 @@
-// Package scan inventaria os hosts ativos de uma rede local.
-//
-// A varredura é um TCP connect scan: para cada IP da faixa tenta abrir conexão
-// numa lista curta de portas comuns. Quem aceita está ligado. Não usa ICMP nem
-// ARP cru porque os dois exigem socket raw, ou seja, root — e o coletor deve
-// rodar como serviço sem privilégio.
 package scan
 
 import (
@@ -16,24 +10,17 @@ import (
 	"time"
 )
 
-// Portas sondadas por host. Lista curta de propósito: cobre estação Windows
-// (445/3389), Linux (22), impressora (9100/515/631), NAS (5000) e web.
 var DefaultPorts = []int{22, 80, 135, 139, 443, 445, 515, 631, 3389, 5000, 8080, 9100}
 
 const (
 	DefaultTimeout     = 400 * time.Millisecond
 	DefaultConcurrency = 256
 
-	// Uma faixa maior que /16 são 65 mil hosts: varredura longa demais para uma
-	// rede de escritório e provavelmente erro de digitação.
 	minPrefixLen = 16
 
-	// Prazo do DNS reverso. Numa rede sem PTR cada consulta esperaria o timeout
-	// inteiro do resolver.
 	reverseDNSTimeout = time.Second
 )
 
-// Host é um endereço que respondeu à varredura.
 type Host struct {
 	IP        string `json:"ip"`
 	Hostname  string `json:"hostname"`
@@ -41,7 +28,6 @@ type Host struct {
 	OpenPorts []int  `json:"open_ports"`
 }
 
-// Config parametriza uma varredura.
 type Config struct {
 	CIDRs       []string
 	Ports       []int
@@ -49,7 +35,6 @@ type Config struct {
 	Concurrency int
 }
 
-// WithDefaults preenche o que não foi informado.
 func (c Config) WithDefaults() Config {
 	if len(c.Ports) == 0 {
 		c.Ports = DefaultPorts
@@ -63,11 +48,6 @@ func (c Config) WithDefaults() Config {
 	return c
 }
 
-// ExpandCIDR devolve os endereços utilizáveis da faixa.
-//
-// Só aceita faixa privada (RFC1918 / link-local / loopback): o coletor existe
-// para inventariar a rede da própria unidade, e recusar endereço público
-// impede que ele seja apontado para redes de terceiros.
 func ExpandCIDR(cidr string) ([]string, error) {
 	ip, network, err := net.ParseCIDR(cidr)
 	if err != nil {
@@ -90,8 +70,6 @@ func ExpandCIDR(cidr string) ([]string, error) {
 		ips = append(ips, addr.String())
 	}
 
-	// Em /31 e /32 todo endereço é utilizável; nas demais o primeiro é a rede e
-	// o último é broadcast.
 	if ones < bits-1 && len(ips) > 2 {
 		ips = ips[1 : len(ips)-1]
 	}
@@ -102,7 +80,6 @@ func isPrivate(ip net.IP) bool {
 	return ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsLoopback()
 }
 
-// nextIP devolve uma cópia do endereço seguinte, sem alterar o original.
 func nextIP(ip net.IP) net.IP {
 	next := make(net.IP, len(ip))
 	copy(next, ip)
@@ -115,8 +92,6 @@ func nextIP(ip net.IP) net.IP {
 	return next
 }
 
-// Run varre todas as faixas e devolve os hosts que responderam, ordenados por
-// endereço. Uma faixa inválida não aborta a varredura das outras.
 func Run(ctx context.Context, cfg Config) ([]Host, []error) {
 	cfg = cfg.WithDefaults()
 
@@ -165,9 +140,6 @@ func Run(ctx context.Context, cfg Config) ([]Host, []error) {
 	}
 	wg.Wait()
 
-	// A tabela ARP é lida depois: foram as conexões TCP desta varredura que a
-	// preencheram. Lendo antes, o MAC de um host novo só apareceria no ciclo
-	// seguinte.
 	arp := ARPTable()
 	for i := range found {
 		found[i].MAC = arp[found[i].IP]
@@ -177,7 +149,6 @@ func Run(ctx context.Context, cfg Config) ([]Host, []error) {
 	return found, errs
 }
 
-// probe testa as portas do host e devolve as que aceitaram conexão.
 func probe(ctx context.Context, ip string, ports []int, timeout time.Duration) []int {
 	var open []int
 	dialer := net.Dialer{Timeout: timeout}
@@ -211,8 +182,6 @@ func reverseDNS(ctx context.Context, ip string) string {
 	return name
 }
 
-// LessIP compara dois IPv4 octeto a octeto. Comparar como texto colocaria
-// 172.16.1.100 antes de 172.16.1.9.
 func LessIP(a, b string) bool {
 	ipA, ipB := net.ParseIP(a).To4(), net.ParseIP(b).To4()
 	if ipA == nil || ipB == nil {

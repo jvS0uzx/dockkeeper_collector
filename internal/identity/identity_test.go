@@ -1,17 +1,18 @@
 package identity
 
 import (
+	"bytes"
 	"encoding/json"
+	"log"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
 
-// isolarAmbiente zera as variáveis de identidade para o teste não herdar o
-// ambiente da máquina de quem roda a suíte.
 func isolarAmbiente(t *testing.T) {
 	t.Helper()
 	for _, k := range []string{
@@ -170,5 +171,35 @@ func TestResolveSemIdentidadeFalha(t *testing.T) {
 	_, _, err := Resolve(http.DefaultClient, "http://painel.invalid", "host-a")
 	if err == nil || !strings.Contains(err.Error(), "sem identidade") {
 		t.Errorf("erro = %v, o coletor sem identidade não pode subir em silêncio", err)
+	}
+}
+
+func TestCaminhoPadraoDaCredencialUsaNomeDockKeeper(t *testing.T) {
+	t.Setenv("COLLECTOR_CREDENTIAL_PATH", "")
+	t.Setenv("ProgramData", `C:\ProgramData`)
+	got := CredentialPath()
+	esperado := "/var/lib/dockkeeper-collector/credential.json"
+	if runtime.GOOS == "windows" {
+		esperado = filepath.Join(`C:\ProgramData`, "dockkeeper-collector", "credential.json")
+	}
+	if got != esperado {
+		t.Errorf("CredentialPath() = %q, esperado %q", got, esperado)
+	}
+}
+
+func TestAvisoDoModoLegadoApontaAFlagDoPainel(t *testing.T) {
+	isolarAmbiente(t)
+	t.Setenv("COLLECTOR_CREDENTIAL_PATH", filepath.Join(t.TempDir(), "credential.json"))
+	t.Setenv("COLLECTOR_TOKEN", "legado-1")
+	var saida bytes.Buffer
+	anterior := log.Writer()
+	log.SetOutput(&saida)
+	t.Cleanup(func() { log.SetOutput(anterior) })
+
+	if _, _, err := Resolve(http.DefaultClient, "http://painel.invalid", "host-a"); err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	if !strings.Contains(saida.String(), "ALLOW_LEGACY_INGEST_TOKEN=true") {
+		t.Errorf("aviso do modo legado não cita a flag do painel: %q", saida.String())
 	}
 }
