@@ -8,6 +8,8 @@ publica versões numeradas; cada entrada leva a data em que chegou à `main`.
 
 ### Alterado
 
+- Cada envio declara o intervalo configurado em `report_interval_sec`. O painel
+  usa o valor para decidir quando o coletor está ausente; sem ele, assume 15 min.
 - **O nome de instalação passou de `vd-collector` para `dockkeeper-collector`**:
   unit systemd, binário, `/etc/dockkeeper-collector.env` e
   `/var/lib/dockkeeper-collector/credential.json`. Máquina já instalada precisa

@@ -88,9 +88,15 @@ func cycle(ctx context.Context, cfg config.Config, client *push.Client) error {
 		return nil
 	}
 
-	return client.Send(ctx, push.Payload{
+	return client.Send(ctx, montarPayload(cfg, hosts))
+}
+
+func montarPayload(cfg config.Config, hosts []scan.Host) push.Payload {
+	return push.Payload{
 		SiteCode:         cfg.SiteCode,
 		CollectorVersion: Version,
 		Hosts:            hosts,
-	})
+
+		ReportIntervalSec: int(cfg.Interval / time.Second),
+	}
 }

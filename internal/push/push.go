@@ -32,6 +32,8 @@ type Payload struct {
 	SiteCode         string      `json:"site_code"`
 	CollectorVersion string      `json:"collector_version"`
 	Hosts            []scan.Host `json:"hosts"`
+
+	ReportIntervalSec int `json:"report_interval_sec"`
 }
 
 type Identity struct {

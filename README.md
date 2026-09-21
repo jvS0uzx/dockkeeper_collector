@@ -321,7 +321,7 @@ Tudo por ambiente. Sem as três primeiras o coletor recusa subir.
 | `COLLECTOR_ENROLL_TOKEN` | identidade | convite de uso único emitido no painel; trocado por credencial própria no primeiro boot |
 | `COLLECTOR_CREDENTIAL_PATH` | não | onde a credencial fica (padrão `/var/lib/dockkeeper-collector/credential.json`) |
 | `COLLECTOR_MACHINE_ID` | não | identificador estável da máquina; vazio usa `/etc/machine-id` |
-| `COLLECTOR_INTERVAL_MIN` | não | minutos entre varreduras (mínimo 1, padrão 15) |
+| `COLLECTOR_INTERVAL_MIN` | não | minutos entre varreduras (mínimo 1, padrão 15); o valor vai em `report_interval_sec` a cada envio, e é por ele que o painel decide quando avisar que o coletor sumiu |
 | `COLLECTOR_PORTS` | não | portas sondadas; vazio usa a lista padrão |
 | `COLLECTOR_ONCE` | não | `true` varre uma vez e encerra |
 
