@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -126,7 +127,7 @@ func TestMetricasDeRedeSeguemOContrato(t *testing.T) {
 	defer srv.Close()
 
 	c := clienteDeTeste(srv.URL, Identity{DeviceID: "dev-1", DeviceToken: "segredo-1"})
-	if err := c.SendMetricasDeRede(context.Background(), metricasDeExemplo()); err != nil {
+	if _, err := c.SendMetricasDeRede(context.Background(), metricasDeExemplo()); err != nil {
 		t.Fatalf("SendMetricasDeRede: %v", err)
 	}
 
@@ -154,7 +155,7 @@ func TestMetricasDeRedeSemDispositivosEnviaListaVazia(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	if err := clienteDeTeste(srv.URL, Identity{LegacyToken: "x"}).SendMetricasDeRede(context.Background(), MetricasDeRede{}); err != nil {
+	if _, err := clienteDeTeste(srv.URL, Identity{LegacyToken: "x"}).SendMetricasDeRede(context.Background(), MetricasDeRede{}); err != nil {
 		t.Fatalf("SendMetricasDeRede: %v", err)
 	}
 	if !strings.Contains(string(recebido), `"devices":[]`) || !strings.Contains(string(recebido), `"schema":1`) {
@@ -181,7 +182,7 @@ func TestMetricasDeRedeRespostasDoPainel(t *testing.T) {
 			chamadas.Add(1)
 			w.WriteHeader(caso.status)
 		}))
-		err := clienteDeTeste(srv.URL, Identity{DeviceID: "d", DeviceToken: "t"}).SendMetricasDeRede(context.Background(), metricasDeExemplo())
+		_, err := clienteDeTeste(srv.URL, Identity{DeviceID: "d", DeviceToken: "t"}).SendMetricasDeRede(context.Background(), metricasDeExemplo())
 		srv.Close()
 
 		if err == nil {
@@ -197,5 +198,69 @@ func TestMetricasDeRedeRespostasDoPainel(t *testing.T) {
 		if caso.alvo == nil && (errors.Is(err, ErrRecusado) || errors.Is(err, ErrUnauthorized)) {
 			t.Errorf("HTTP %d: transitório classificado como recusa: %v", caso.status, err)
 		}
+	}
+}
+
+func TestMetricasDeRedeLeContagemDaResposta(t *testing.T) {
+	casos := []struct {
+		corpo    string
+		esperado RespostaRede
+	}{
+		{`{"devices": 2, "interfaces": 5, "rejeitados": 1}`, RespostaRede{Devices: 2, Interfaces: 5, Rejeitados: 1}},
+		{`{"devices": 2, "interfaces": 5}`, RespostaRede{Devices: 2, Interfaces: 5}},
+		{``, RespostaRede{}},
+		{`não é json`, RespostaRede{}},
+	}
+	for _, caso := range casos {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, caso.corpo)
+		}))
+		resposta, err := clienteDeTeste(srv.URL, Identity{DeviceID: "d", DeviceToken: "t"}).SendMetricasDeRede(context.Background(), metricasDeExemplo())
+		srv.Close()
+
+		if err != nil {
+			t.Errorf("corpo %q: erro = %v", caso.corpo, err)
+			continue
+		}
+		if resposta != caso.esperado {
+			t.Errorf("corpo %q: resposta = %+v, esperado %+v", caso.corpo, resposta, caso.esperado)
+		}
+	}
+}
+
+func TestMetricasDeRedeNuncaEnviaMedidaNegativaOuNaoFinita(t *testing.T) {
+	var recebido []byte
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		recebido, _ = io.ReadAll(r.Body)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	original := metricasDeExemplo()
+	original.Devices[0].Interfaces[0].InBps = f64(-8)
+	original.Devices[0].Interfaces[0].OutBps = f64(math.Inf(1))
+	original.Devices[0].Interfaces[0].SpeedMbps = f64(math.NaN())
+
+	if _, err := clienteDeTeste(srv.URL, Identity{DeviceID: "d", DeviceToken: "t"}).SendMetricasDeRede(context.Background(), original); err != nil {
+		t.Fatalf("SendMetricasDeRede: %v", err)
+	}
+
+	var enviado struct {
+		Devices []struct {
+			Interfaces []map[string]json.RawMessage `json:"interfaces"`
+		} `json:"devices"`
+	}
+	if err := json.Unmarshal(recebido, &enviado); err != nil {
+		t.Fatalf("corpo não é JSON: %v: %s", err, recebido)
+	}
+	primeira := enviado.Devices[0].Interfaces[0]
+	for _, campo := range []string{"in_bps", "out_bps", "speed_mbps"} {
+		if string(primeira[campo]) != "null" {
+			t.Errorf("%s = %s, esperado null", campo, primeira[campo])
+		}
+	}
+	if *original.Devices[0].Interfaces[0].InBps != -8 {
+		t.Errorf("a higienização alterou o lote do chamador")
 	}
 }

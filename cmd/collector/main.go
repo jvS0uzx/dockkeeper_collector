@@ -20,9 +20,14 @@ import (
 	"github.com/jvS0uzx/dockkeeper_collector/scan"
 )
 
-const Version = "1.0.0"
+var Version = "dev"
 
 func main() {
+	if len(os.Args) > 1 && (os.Args[1] == "--version" || os.Args[1] == "-version") {
+		fmt.Println(Version)
+		return
+	}
+
 	log.SetPrefix("[collector] ")
 	log.SetFlags(log.LstdFlags)
 
@@ -33,6 +38,11 @@ func main() {
 
 	if cfg.Inseguro {
 		log.Printf("AVISO: %s usa http:// e ALLOW_INSECURE_HTTP=true; a credencial do coletor viaja em claro nesta rede", cfg.ServerURL)
+	}
+
+	if len(cfg.SNMP.Publicos) > 0 {
+		log.Printf("AVISO: SNMP_PERMITIR_PUBLICO=true e alvos SNMP fora da rede privada (%s); a community viaja em claro até eles",
+			strings.Join(cfg.SNMP.Publicos, ","))
 	}
 
 	log.Printf("v%s unidade=%q faixas=%v destino=%s intervalo=%s",
@@ -177,11 +187,18 @@ func cicloSNMP(ctx context.Context, cfg config.Config, coletor *snmp.Coletor, cl
 	log.Printf("snmp: %d de %d equipamentos, %d interfaces em %s",
 		alcancaveis, len(dispositivos), interfaces, time.Since(inicio).Round(time.Millisecond))
 
-	err := client.SendMetricasDeRede(ctx, montarMetricas(cfg, inicio, dispositivos))
+	resposta, err := client.SendMetricasDeRede(ctx, montarMetricas(cfg, inicio, dispositivos))
 	if errors.Is(err, push.ErrRecusado) {
 		return fmt.Errorf("%w; o lote foi descartado e o próximo ciclo envia leitura nova", err)
 	}
-	return err
+	if err != nil {
+		return err
+	}
+	if resposta.Rejeitados > 0 {
+		log.Printf("AVISO: o painel aceitou o lote SNMP mas descartou %d de %d equipamentos por dados inválidos; confira SNMP_TARGETS e a versão do coletor",
+			resposta.Rejeitados, len(dispositivos))
+	}
+	return nil
 }
 
 func montarMetricas(cfg config.Config, coletadoEm time.Time, dispositivos []snmp.Dispositivo) push.MetricasDeRede {

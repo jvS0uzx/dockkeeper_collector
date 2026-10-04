@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"math"
 	"net/http"
 	"strings"
 	"time"
@@ -23,7 +25,10 @@ const (
 	endpointPath     = "/api/ingest/inventory"
 	endpointRedePath = "/api/ingest/network-metrics"
 
-	SchemaRede = 1
+	SchemaInventario = 1
+	SchemaRede       = 1
+
+	limiteResposta = 64 << 10
 )
 
 var ErrUnauthorized = errors.New("credencial recusada pelo painel")
@@ -33,6 +38,7 @@ var ErrRecusado = errors.New("painel recusou o envio")
 var errTransitorio = errors.New("falha transitória")
 
 type Payload struct {
+	Schema           int         `json:"schema"`
 	SiteCode         string      `json:"site_code"`
 	CollectorVersion string      `json:"collector_version"`
 	Hosts            []scan.Host `json:"hosts"`
@@ -47,6 +53,12 @@ type MetricasDeRede struct {
 	IntervalSec      int                `json:"interval_sec"`
 	CollectedAt      time.Time          `json:"collected_at"`
 	Devices          []snmp.Dispositivo `json:"devices"`
+}
+
+type RespostaRede struct {
+	Devices    int `json:"devices"`
+	Interfaces int `json:"interfaces"`
+	Rejeitados int `json:"rejeitados"`
 }
 
 type Identity struct {
@@ -73,35 +85,64 @@ func New(baseURL string, id Identity) *Client {
 }
 
 func (c *Client) Send(ctx context.Context, payload Payload) error {
+	payload.Schema = SchemaInventario
 	body, err := json.Marshal(payload)
 	if err != nil {
 		return fmt.Errorf("erro ao serializar o inventário: %w", err)
 	}
-	return c.enviar(ctx, endpointPath, body)
+	_, err = c.enviar(ctx, endpointPath, body)
+	return err
 }
 
-func (c *Client) SendMetricasDeRede(ctx context.Context, payload MetricasDeRede) error {
+func (c *Client) SendMetricasDeRede(ctx context.Context, payload MetricasDeRede) (RespostaRede, error) {
 	payload.Schema = SchemaRede
 	payload.CollectedAt = payload.CollectedAt.UTC().Truncate(time.Second)
-	if payload.Devices == nil {
-		payload.Devices = []snmp.Dispositivo{}
-	}
+	payload.Devices = higienizar(payload.Devices)
 	body, err := json.Marshal(payload)
 	if err != nil {
-		return fmt.Errorf("erro ao serializar as métricas de rede: %w", err)
+		return RespostaRede{}, fmt.Errorf("erro ao serializar as métricas de rede: %w", err)
 	}
-	return c.enviar(ctx, endpointRedePath, body)
+	resposta, err := c.enviar(ctx, endpointRedePath, body)
+	if err != nil {
+		return RespostaRede{}, err
+	}
+	var r RespostaRede
+	_ = json.Unmarshal(resposta, &r)
+	return r, nil
 }
 
-func (c *Client) enviar(ctx context.Context, caminho string, body []byte) error {
+func higienizar(dispositivos []snmp.Dispositivo) []snmp.Dispositivo {
+	saida := make([]snmp.Dispositivo, len(dispositivos))
+	for i, d := range dispositivos {
+		ifs := make([]snmp.Interface, len(d.Interfaces))
+		for j, it := range d.Interfaces {
+			it.SpeedMbps = medida(it.SpeedMbps)
+			it.InBps = medida(it.InBps)
+			it.OutBps = medida(it.OutBps)
+			ifs[j] = it
+		}
+		d.Interfaces = ifs
+		saida[i] = d
+	}
+	return saida
+}
+
+func medida(v *float64) *float64 {
+	if v == nil || *v < 0 || math.IsNaN(*v) || math.IsInf(*v, 0) {
+		return nil
+	}
+	return v
+}
+
+func (c *Client) enviar(ctx context.Context, caminho string, body []byte) ([]byte, error) {
 	var lastErr error
 	for attempt := 1; attempt <= maxAttempts; attempt++ {
-		err := c.post(ctx, caminho, body)
+		resposta, err := c.post(ctx, caminho, body)
 		if err == nil {
-			return nil
+			return resposta, nil
 		}
 		if !errors.Is(err, errTransitorio) {
-			return err
+			return nil, err
 		}
 		lastErr = err
 
@@ -110,17 +151,17 @@ func (c *Client) enviar(ctx context.Context, caminho string, body []byte) error 
 		}
 		select {
 		case <-ctx.Done():
-			return ctx.Err()
+			return nil, ctx.Err()
 		case <-time.After(c.delay):
 		}
 	}
-	return fmt.Errorf("envio falhou após %d tentativas: %w", maxAttempts, lastErr)
+	return nil, fmt.Errorf("envio falhou após %d tentativas: %w", maxAttempts, lastErr)
 }
 
-func (c *Client) post(ctx context.Context, caminho string, body []byte) error {
+func (c *Client) post(ctx context.Context, caminho string, body []byte) ([]byte, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+caminho, bytes.NewReader(body))
 	if err != nil {
-		return err
+		return nil, err
 	}
 	req.Header.Set("Content-Type", "application/json")
 	if c.id.DeviceID != "" {
@@ -132,24 +173,25 @@ func (c *Client) post(ctx context.Context, caminho string, body []byte) error {
 
 	resp, err := c.http.Do(req)
 	if err != nil {
-		return fmt.Errorf("%w: %w", errTransitorio, c.redact(err))
+		return nil, fmt.Errorf("%w: %w", errTransitorio, c.redact(err))
 	}
 	defer resp.Body.Close()
 
 	switch {
 	case resp.StatusCode == http.StatusOK, resp.StatusCode == http.StatusAccepted:
-		return nil
+		resposta, _ := io.ReadAll(io.LimitReader(resp.Body, limiteResposta))
+		return resposta, nil
 	case resp.StatusCode == http.StatusUnauthorized, resp.StatusCode == http.StatusForbidden:
 		if c.id.DeviceID == "" {
-			return fmt.Errorf("%w (HTTP %d): o token compartilhado so e aceito com "+
+			return nil, fmt.Errorf("%w (HTTP %d): o token compartilhado so e aceito com "+
 				"ALLOW_LEGACY_INGEST_TOKEN=true no painel; migre para COLLECTOR_ENROLL_TOKEN",
 				ErrUnauthorized, resp.StatusCode)
 		}
-		return fmt.Errorf("%w (HTTP %d)", ErrUnauthorized, resp.StatusCode)
+		return nil, fmt.Errorf("%w (HTTP %d)", ErrUnauthorized, resp.StatusCode)
 	case resp.StatusCode >= 500, resp.StatusCode == http.StatusTooManyRequests:
-		return fmt.Errorf("%w: painel respondeu HTTP %d", errTransitorio, resp.StatusCode)
+		return nil, fmt.Errorf("%w: painel respondeu HTTP %d", errTransitorio, resp.StatusCode)
 	default:
-		return fmt.Errorf("%w (HTTP %d)", ErrRecusado, resp.StatusCode)
+		return nil, fmt.Errorf("%w (HTTP %d)", ErrRecusado, resp.StatusCode)
 	}
 }
 
