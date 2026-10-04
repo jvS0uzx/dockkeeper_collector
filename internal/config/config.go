@@ -34,6 +34,8 @@ type SNMP struct {
 	Timeout   time.Duration
 	Retries   int
 	Porta     uint16
+
+	Publicos []string
 }
 
 func (s SNMP) Ativo() bool { return len(s.Alvos) > 0 }
@@ -137,17 +139,32 @@ func carregarSNMP(getenv Getenv) (SNMP, error) {
 		Porta:     DefaultSNMPPort,
 	}
 
+	permitePublico := isTrue(getenv("SNMP_PERMITIR_PUBLICO"))
 	vistos := map[string]bool{}
 	for _, bruto := range SplitList(getenv("SNMP_TARGETS")) {
 		ip, err := netip.ParseAddr(bruto)
 		if err != nil || ip.Zone() != "" {
 			return SNMP{}, fmt.Errorf("SNMP_TARGETS tem um alvo inválido: %q não é um endereço IP", bruto)
 		}
-		texto := ip.Unmap().String()
-		if !vistos[texto] {
-			vistos[texto] = true
-			s.Alvos = append(s.Alvos, texto)
+		ip = ip.Unmap()
+		if ip.IsUnspecified() || ip.IsMulticast() || ip == netip.AddrFrom4([4]byte{255, 255, 255, 255}) {
+			return SNMP{}, fmt.Errorf("SNMP_TARGETS tem um alvo inválido: %q não é o endereço de um equipamento", bruto)
 		}
+		texto := ip.String()
+		if vistos[texto] {
+			continue
+		}
+		vistos[texto] = true
+		s.Alvos = append(s.Alvos, texto)
+		if ip.IsPrivate() || ip.IsLoopback() || ip.IsLinkLocalUnicast() {
+			continue
+		}
+		if !permitePublico {
+			return SNMP{}, fmt.Errorf(
+				"SNMP_TARGETS tem um alvo fora da rede privada: %q. O SNMP v2c manda a community em texto puro; use o IP de gerência interno do equipamento, ou defina SNMP_PERMITIR_PUBLICO=true se o caminho até ele for confiável",
+				bruto)
+		}
+		s.Publicos = append(s.Publicos, texto)
 	}
 	if !s.Ativo() {
 		return SNMP{}, nil
