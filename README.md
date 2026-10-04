@@ -50,7 +50,7 @@ boot.
                             ▼
 4. INGESTÃO        a cada 15 min: TCP connect scan das faixas privadas,
    (contínua)      leitura do cache ARP, DNS reverso
-                   POST /api/ingest/inventory
+                   POST /api/ingest/inventory  {"schema": 1, ...}
                    headers X-Device-Id / X-Device-Token
                    a unidade sai da credencial no lado do painel;
                    o site_code do corpo é conferência, não fonte
@@ -253,10 +253,15 @@ painel — sala, responsável, patrimônio — que nunca é sobrescrito por um c
 `hostname` e `mac` só substituem o valor guardado quando vieram preenchidos: um
 DNS reverso que falhou não pode apagar o nome já conhecido.
 
+Os dois envios, inventário e métricas de rede, levam `"schema": 1`. É a versão
+do contrato com o painel: um painel que não conhece o número recusa com `400`
+(`schema N não suportado; este painel aceita 1`), e o coletor trata isso como
+recusa definitiva, sem repetir.
+
 ## Instalação
 
 ```bash
-go build -o collector ./cmd/collector
+go build -ldflags "-X main.Version=1.0.0" -o collector ./cmd/collector
 
 sudo cp collector /usr/local/bin/dockkeeper-collector
 sudo cp deploy/dockkeeper-collector.service /etc/systemd/system/
@@ -274,6 +279,21 @@ fora do repositório. O `.gitignore` recusa qualquer `*.env` que não termine em
 `.exemplo`.
 
 Para rodar por cron em vez de serviço, use `COLLECTOR_ONCE=true`.
+
+### Versão
+
+A versão não está no código: entra no build por `-ldflags`.
+
+```bash
+go build -ldflags "-X main.Version=1.0.0" ./cmd/collector
+./collector --version
+```
+
+`--version` (ou `-version`) imprime a versão e sai sem ler configuração. Um
+binário compilado sem `-ldflags` se reporta como `dev`. O valor aparece também
+na linha de subida do log (`v1.0.0 unidade=...`) e vai em `collector_version`
+em todo envio ao painel. O CI compila com `-X main.Version=0.0.0-ci` e confere a
+saída de `--version`.
 
 ### Migração do nome antigo
 
@@ -315,16 +335,18 @@ Tudo por ambiente. Sem as três primeiras o coletor recusa subir.
 
 | Variável | Obrigatória | Descrição |
 |---|---|---|
-| `COLLECTOR_SERVER_URL` | sim | URL do painel central. Precisa ser `https://` quando o painel é remoto: com `http://` o coletor recusa subir, porque a credencial viajaria em claro. `http://localhost`, `http://127.0.0.1` e `http://[::1]` continuam valendo, e `ALLOW_INSECURE_HTTP=true` libera o `http://` remoto com aviso no log |
+| `COLLECTOR_SERVER_URL` | sim | URL do painel central. Precisa ser `https://` quando o painel é remoto: com `http://` o coletor recusa subir, porque a credencial viajaria em claro. `http://localhost`, `http://127.0.0.1` e `http://[::1]` continuam valendo |
 | `COLLECTOR_SITE` | sim | código da unidade, cadastrado na tela Unidades |
 | `COLLECTOR_CIDRS` | sim | faixas varridas, separadas por vírgula; só rede privada |
+| `ALLOW_INSECURE_HTTP` | não | `true` libera `http://` para painel remoto, com `AVISO` no log a cada subida (padrão `false`) |
 | `COLLECTOR_ENROLL_TOKEN` | identidade | convite de uso único emitido no painel; trocado por credencial própria no primeiro boot |
 | `COLLECTOR_CREDENTIAL_PATH` | não | onde a credencial fica (padrão `/var/lib/dockkeeper-collector/credential.json`) |
 | `COLLECTOR_MACHINE_ID` | não | identificador estável da máquina; vazio usa `/etc/machine-id` |
 | `COLLECTOR_INTERVAL_MIN` | não | minutos entre varreduras (mínimo 1, padrão 15); o valor vai em `report_interval_sec` a cada envio, e é por ele que o painel decide quando avisar que o coletor sumiu |
 | `COLLECTOR_PORTS` | não | portas sondadas; vazio usa a lista padrão |
 | `COLLECTOR_ONCE` | não | `true` varre uma vez e encerra; com SNMP ligado, faz também um ciclo SNMP |
-| `SNMP_TARGETS` | não | IPs dos equipamentos lidos por SNMP, separados por vírgula; vazio desliga o SNMP |
+| `SNMP_TARGETS` | não | IPs dos equipamentos lidos por SNMP, separados por vírgula; vazio desliga o SNMP. Só rede interna, ver [Alvos aceitos](#alvos-aceitos) |
+| `SNMP_PERMITIR_PUBLICO` | não | `true` aceita alvo SNMP fora da rede interna, com `AVISO` no log listando esses alvos (padrão `false`) |
 | `SNMP_COMMUNITY` | se houver alvos | community de leitura (segredo) |
 | `SNMP_VERSION` | não | só `2c` (padrão); v3 vem numa fase seguinte |
 | `SNMP_INTERVAL` | não | intervalo entre leituras: `60` ou `60s` (padrão 60 s, mínimo 10 s) |
@@ -342,6 +364,25 @@ Com `SNMP_TARGETS` preenchido, o coletor lê por SNMP v2c as interfaces de
 switches, roteadores e firewalls da unidade e envia o tráfego por porta para o
 painel. Roda num laço próprio, com o intervalo de `SNMP_INTERVAL`, independente
 da varredura de inventário; um não atrasa o outro. Sem alvos, nada muda.
+
+### Alvos aceitos
+
+**Mudança incompatível na 1.0.0.** Alvo SNMP fora da rede interna impede o
+boot, com a mensagem `SNMP_TARGETS tem um alvo fora da rede privada`. O v2c
+manda a community em texto puro, e um alvo público a faria atravessar a
+internet. Instalação que já lia equipamento por IP público só sobe de novo com
+`SNMP_PERMITIR_PUBLICO=true`.
+
+| Endereço | Sem a flag | Com `SNMP_PERMITIR_PUBLICO=true` |
+|---|---|---|
+| RFC 1918 (`10/8`, `172.16/12`, `192.168/16`) e `fc00::/7` | aceito | aceito |
+| loopback (`127/8`, `::1`) e link-local (`169.254/16`, `fe80::/10`) | aceito | aceito |
+| CGNAT (`100.64.0.0/10`) e qualquer outro endereço público | recusa o boot | aceito, com `AVISO` |
+| `0.0.0.0`, `::`, multicast e `255.255.255.255` | recusa o boot | recusa o boot |
+
+A faixa CGNAT fica fora porque não é rede da unidade: é a rede do provedor.
+Endereço com zona IPv6 (`fe80::1%eth0`) também é recusado como inválido. Alvo
+repetido é lido uma vez só.
 
 ### O que é coletado
 
@@ -365,7 +406,9 @@ A taxa é calculada no coletor, que guarda em memória a amostra anterior de cad
   descartado e o ciclo vai com `null`;
 - velocidade em Mbps vem de `ifHighSpeed` quando maior que zero, senão de
   `ifSpeed`;
-- o que o equipamento não informa vai `null`, nunca zero.
+- o que o equipamento não informa vai `null`, nunca zero;
+- velocidade e bps negativos, `NaN` ou infinitos são trocados por `null` logo
+  antes do envio.
 
 Os alvos são lidos em paralelo, quatro por vez, cada um com o seu prazo. Um
 alvo que não responde não derruba o ciclo: vai no envio com `reachable: false`
@@ -379,6 +422,12 @@ mesmos cabeçalhos e a mesma política de repetição do inventário. O corpo le
 a lista `devices`, cada um com `interfaces`. Um `400`, `409` ou `413` não é
 repetido: o lote é descartado, o motivo vai para o log e o ciclo seguinte envia
 leitura nova.
+
+O painel aceita lote parcial: responde `200` com
+`{"devices", "interfaces", "rejeitados"}` e descarta só o equipamento com dado
+inválido. Quando `rejeitados` passa de zero, o coletor registra
+`AVISO: o painel aceitou o lote SNMP mas descartou N de M equipamentos por dados
+inválidos; confira SNMP_TARGETS e a versão do coletor`.
 
 ### Limites
 

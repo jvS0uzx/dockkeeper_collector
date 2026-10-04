@@ -16,8 +16,9 @@ go test -race ./...
 gofmt -l .
 ```
 
-O CI roda exatamente isso, mais o `gitleaks` sobre o histórico inteiro. PR com
-qualquer um deles vermelho não entra.
+O CI roda isso em `ubuntu-24.04`, mais o `gitleaks` sobre o histórico inteiro e
+um build com `-ldflags "-X main.Version=0.0.0-ci"` que confere a saída de
+`--version`. PR com qualquer um deles vermelho não entra.
 
 ## Dependências do CI
 
@@ -27,19 +28,23 @@ sem SHA de 40 caracteres e download de release sem conferência de SHA-256.
 
 | Dependência | Versão | Fixada em |
 |---|---|---|
-| `actions/checkout` | v4.4.0 | `11d5960a326750d5838078e36cf38b85af677262` |
-| `actions/setup-go` | v5.6.0 | `40f1582b2485089dde7abd97c1529aa768e1baff` |
+| `actions/checkout` | v7.0.1 | `3d3c42e5aac5ba805825da76410c181273ba90b1` |
+| `actions/setup-go` | v7.0.0 | `b7ad1dad31e06c5925ef5d2fc7ad053ef454303e` |
 | `gitleaks` (`linux_x64.tar.gz`) | 8.18.4 | SHA-256 `ba6dbb656933921c775ee5a2d1c13a91046e7952e9d919f9bac4cec61d628e7d` |
 
 Para atualizar uma action, pegue o SHA da tag nova e troque no workflow e nesta
 tabela, no mesmo commit:
 
 ```bash
-gh api repos/actions/checkout/git/ref/tags/v4.4.0 --jq .object.sha
+gh api repos/actions/checkout/git/ref/tags/v7.0.1 --jq .object.sha
 ```
 
 Se a resposta vier com `type` igual a `tag`, e não `commit`, a tag é anotada: resolva
 o commit com `gh api repos/actions/checkout/git/tags/<sha> --jq .object.sha`.
+
+O Dependabot (`.github/dependabot.yml`) abre toda semana um PR agrupado para os
+módulos Go (prefixo `build`) e outro para as actions (prefixo `ci`). PR de action
+precisa atualizar esta tabela no mesmo commit.
 
 Para atualizar o `gitleaks`, troque `VERSAO` e `SHA256` no workflow pelo valor da
 linha `linux_x64` do arquivo `gitleaks_<versão>_checksums.txt` publicado no release.
