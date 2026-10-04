@@ -10,9 +10,9 @@ permissions:
 
 jobs:
   segredos:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           fetch-depth: 0
 
@@ -31,11 +31,11 @@ jobs:
           ./gitleaks detect --redact --no-banner --no-git
 
   go:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
 
-      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
         with:
           go-version-file: go.mod
           cache: false
@@ -55,3 +55,8 @@ jobs:
 
       - name: go test
         run: go test -count=1 -race ./...
+
+      - name: versão injetada por ldflags
+        run: |
+          go build -ldflags "-X main.Version=0.0.0-ci" -o coletor ./cmd/collector
+          test "$(./coletor --version)" = "0.0.0-ci"
