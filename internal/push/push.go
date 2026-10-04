@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/jvS0uzx/dockkeeper_collector/internal/snmp"
 	"github.com/jvS0uzx/dockkeeper_collector/scan"
 )
 
@@ -19,12 +20,15 @@ const (
 	maxAttempts = 3
 	retryDelay  = 5 * time.Second
 
-	endpointPath = "/api/ingest/inventory"
+	endpointPath     = "/api/ingest/inventory"
+	endpointRedePath = "/api/ingest/network-metrics"
+
+	SchemaRede = 1
 )
 
 var ErrUnauthorized = errors.New("credencial recusada pelo painel")
 
-var ErrRecusado = errors.New("painel recusou o inventário")
+var ErrRecusado = errors.New("painel recusou o envio")
 
 var errTransitorio = errors.New("falha transitória")
 
@@ -34,6 +38,15 @@ type Payload struct {
 	Hosts            []scan.Host `json:"hosts"`
 
 	ReportIntervalSec int `json:"report_interval_sec"`
+}
+
+type MetricasDeRede struct {
+	Schema           int                `json:"schema"`
+	SiteCode         string             `json:"site_code"`
+	CollectorVersion string             `json:"collector_version"`
+	IntervalSec      int                `json:"interval_sec"`
+	CollectedAt      time.Time          `json:"collected_at"`
+	Devices          []snmp.Dispositivo `json:"devices"`
 }
 
 type Identity struct {
@@ -64,10 +77,26 @@ func (c *Client) Send(ctx context.Context, payload Payload) error {
 	if err != nil {
 		return fmt.Errorf("erro ao serializar o inventário: %w", err)
 	}
+	return c.enviar(ctx, endpointPath, body)
+}
 
+func (c *Client) SendMetricasDeRede(ctx context.Context, payload MetricasDeRede) error {
+	payload.Schema = SchemaRede
+	payload.CollectedAt = payload.CollectedAt.UTC().Truncate(time.Second)
+	if payload.Devices == nil {
+		payload.Devices = []snmp.Dispositivo{}
+	}
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("erro ao serializar as métricas de rede: %w", err)
+	}
+	return c.enviar(ctx, endpointRedePath, body)
+}
+
+func (c *Client) enviar(ctx context.Context, caminho string, body []byte) error {
 	var lastErr error
 	for attempt := 1; attempt <= maxAttempts; attempt++ {
-		err := c.post(ctx, body)
+		err := c.post(ctx, caminho, body)
 		if err == nil {
 			return nil
 		}
@@ -88,8 +117,8 @@ func (c *Client) Send(ctx context.Context, payload Payload) error {
 	return fmt.Errorf("envio falhou após %d tentativas: %w", maxAttempts, lastErr)
 }
 
-func (c *Client) post(ctx context.Context, body []byte) error {
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+endpointPath, bytes.NewReader(body))
+func (c *Client) post(ctx context.Context, caminho string, body []byte) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+caminho, bytes.NewReader(body))
 	if err != nil {
 		return err
 	}

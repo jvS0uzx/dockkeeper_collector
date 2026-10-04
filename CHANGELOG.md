@@ -23,6 +23,9 @@ publica versões numeradas; cada entrada leva a data em que chegou à `main`.
   auditoria por ciclo.
 - `503` deixou de ser tratado como credencial recusada e passou a ser falha
   transitória.
+- A recusa definitiva do painel passou a ser registrada como `painel recusou o
+  envio (HTTP n)`, e não mais `painel recusou o inventário`, porque vale também
+  para as métricas de rede.
 
 ### Descontinuado
 
@@ -32,6 +35,13 @@ publica versões numeradas; cada entrada leva a data em que chegou à `main`.
 
 ### Adicionado
 
+- Leitura de interfaces por SNMP v2c (`SNMP_TARGETS`, `SNMP_COMMUNITY`,
+  `SNMP_VERSION`, `SNMP_INTERVAL`, `SNMP_TIMEOUT`, `SNMP_RETRIES`,
+  `SNMP_PORT`). O coletor calcula bps, erros e descartes por porta e envia para
+  `POST /api/ingest/network-metrics` num laço próprio, independente do
+  inventário. Alvo inválido, versão diferente de `2c` ou community ausente
+  impedem a subida. Primeira dependência externa: `github.com/gosnmp/gosnmp`
+  v1.45.0, Go puro.
 - CI no GitHub Actions: `gofmt`, `go vet`, `go build`, `go test -race` e
   `gitleaks` sobre o histórico completo.
 - Teste que falha se aparecer comentário no código.

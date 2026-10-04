@@ -323,11 +323,76 @@ Tudo por ambiente. Sem as três primeiras o coletor recusa subir.
 | `COLLECTOR_MACHINE_ID` | não | identificador estável da máquina; vazio usa `/etc/machine-id` |
 | `COLLECTOR_INTERVAL_MIN` | não | minutos entre varreduras (mínimo 1, padrão 15); o valor vai em `report_interval_sec` a cada envio, e é por ele que o painel decide quando avisar que o coletor sumiu |
 | `COLLECTOR_PORTS` | não | portas sondadas; vazio usa a lista padrão |
-| `COLLECTOR_ONCE` | não | `true` varre uma vez e encerra |
+| `COLLECTOR_ONCE` | não | `true` varre uma vez e encerra; com SNMP ligado, faz também um ciclo SNMP |
+| `SNMP_TARGETS` | não | IPs dos equipamentos lidos por SNMP, separados por vírgula; vazio desliga o SNMP |
+| `SNMP_COMMUNITY` | se houver alvos | community de leitura (segredo) |
+| `SNMP_VERSION` | não | só `2c` (padrão); v3 vem numa fase seguinte |
+| `SNMP_INTERVAL` | não | intervalo entre leituras: `60` ou `60s` (padrão 60 s, mínimo 10 s) |
+| `SNMP_TIMEOUT` | não | prazo de cada requisição por alvo (padrão 2 s) |
+| `SNMP_RETRIES` | não | repetições por requisição (padrão 1, de 0 a 10) |
+| `SNMP_PORT` | não | porta UDP do agente (padrão 161) |
 
 Identidade: o coletor precisa da credencial já persistida ou de um convite em
 `COLLECTOR_ENROLL_TOKEN`. A credencial vence o convite, e sem nenhum dos dois ele
 não sobe.
+
+## SNMP
+
+Com `SNMP_TARGETS` preenchido, o coletor lê por SNMP v2c as interfaces de
+switches, roteadores e firewalls da unidade e envia o tráfego por porta para o
+painel. Roda num laço próprio, com o intervalo de `SNMP_INTERVAL`, independente
+da varredura de inventário; um não atrasa o outro. Sem alvos, nada muda.
+
+### O que é coletado
+
+Por equipamento, a cada ciclo: `sysName`, `sysDescr` e `sysUpTime` por GET, e
+por GETBULK as colunas da `ifTable` e da `ifXTable` — nome, descrição, alias,
+tipo, velocidade, estado administrativo e operacional, octetos, erros e
+descartes de entrada e saída. Interface de loopback de software (`ifType` 24)
+fica de fora.
+
+A taxa é calculada no coletor, que guarda em memória a amostra anterior de cada
+`(ip, if_index)`:
+
+- tráfego em bits por segundo, preferindo os contadores de 64 bits
+  (`ifHCInOctets`/`ifHCOutOctets`) e caindo para os de 32 bits quando o
+  equipamento não os tem; o tempo é o do relógio do coletor entre as amostras;
+- erros e descartes são a diferença entre um ciclo e o anterior;
+- primeira amostra, interface nova, contador de 64 bits que diminuiu ou troca de
+  largura do contador: o valor vai `null`, porque não há delta confiável;
+- contador de 32 bits que diminuiu conta como uma volta de 2^32;
+- `sysUpTime` menor que o anterior é reinício do equipamento: o estado dele é
+  descartado e o ciclo vai com `null`;
+- velocidade em Mbps vem de `ifHighSpeed` quando maior que zero, senão de
+  `ifSpeed`;
+- o que o equipamento não informa vai `null`, nunca zero.
+
+Os alvos são lidos em paralelo, quatro por vez, cada um com o seu prazo. Um
+alvo que não responde não derruba o ciclo: vai no envio com `reachable: false`
+e um erro curto em português, sem a community.
+
+### Envio
+
+`POST /api/ingest/network-metrics`, com a mesma identidade de dispositivo, os
+mesmos cabeçalhos e a mesma política de repetição do inventário. O corpo leva
+`schema: 1`, `site_code`, `collector_version`, `interval_sec`, `collected_at` e
+a lista `devices`, cada um com `interfaces`. Um `400`, `409` ou `413` não é
+repetido: o lote é descartado, o motivo vai para o log e o ciclo seguinte envia
+leitura nova.
+
+### Limites
+
+- **Só v2c.** A community viaja em texto puro na rede. Ponha os equipamentos
+  numa VLAN de gerência e restrinja o SNMP por ACL ao IP do coletor; use
+  community só de leitura, nunca a de escrita. O v3, com autenticação e
+  criptografia, fica para uma fase seguinte.
+- **O estado é só em memória.** Reiniciar o coletor perde uma amostra: o
+  primeiro ciclo depois do restart vai com as taxas em `null`. O mesmo vale para
+  `COLLECTOR_ONCE=true`, que faz uma leitura só e por isso nunca tem taxa.
+- A community nunca aparece em log, mensagem de erro ou envio; o log de subida
+  mostra só alvos, porta, intervalo, prazo e repetições.
+- Alvo que leva mais de `SNMP_TIMEOUT` por requisição é tratado como
+  inalcançável naquele ciclo.
 
 ## Descontinuado: token compartilhado
 

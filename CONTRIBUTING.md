@@ -6,7 +6,8 @@ precisa para ser aceito sem ida e volta.
 
 ## Rodar e testar
 
-Só a biblioteca padrão do Go, na versão declarada no `go.mod`.
+Go na versão declarada no `go.mod`. A única dependência externa é
+`github.com/gosnmp/gosnmp`, para o SNMP.
 
 ```bash
 go build ./...
@@ -59,7 +60,8 @@ linha `linux_x64` do arquivo `gitleaks_<versão>_checksums.txt` publicado no rel
 
 ## Contrato com o painel
 
-O coletor fala com o painel por `POST /api/enroll` e `POST /api/ingest/inventory`.
+O coletor fala com o painel por `POST /api/enroll`, `POST /api/ingest/inventory` e
+`POST /api/ingest/network-metrics`.
 Mudança que toca esse contrato (campos do envio, cabeçalhos, códigos de resposta)
 precisa do PR correspondente no [painel](https://github.com/jvS0uzx/dock_keeper),
 revisado junto. Um lado sozinho quebra as unidades já instaladas.
