@@ -283,7 +283,7 @@ func (c *Coletor) mensagem(err error) string {
 	switch {
 	case errors.Is(err, context.Canceled):
 		msg = "coleta interrompida pelo encerramento do coletor"
-	case errors.Is(err, context.DeadlineExceeded), strings.Contains(bruta, "timeout"):
+	case errors.Is(err, context.DeadlineExceeded), errors.Is(err, gosnmp.ErrMaxRetriesExceeded):
 		msg = "sem resposta SNMP no tempo limite: equipamento desligado, community errada ou ACL bloqueando o coletor"
 	case strings.Contains(bruta, "refused"):
 		msg = "conexão recusada: o equipamento não aceita SNMP nesta porta"
